@@ -1,3 +1,4 @@
 [submodule "third_party/NetworkManager"]
 	path = third_party/NetworkManager
-	url = https://gitlab.com/myrrhperiwinkle/NetworkManager-nkxlat.git
+	url = https://github.com/msizanoen1/NetworkManager.git
+	branch = nkxlat
