@@ -1,0 +1,11 @@
+[submodule "third_party/NetworkManager"]
+	path = third_party/NetworkManager
+	url = https://github.com/msizanoen1/NetworkManager.git
+	branch = nkxlat
+[submodule "third_party/sd-notify"]
+	path = third_party/sd-notify
+	url = https://github.com/msizanoen1/sd-notify.git
+	branch = nkxlat
+[submodule "third_party/vmlinux.h"]
+	path = third_party/vmlinux.h
+	url = https://github.com/libbpf/vmlinux.h.git

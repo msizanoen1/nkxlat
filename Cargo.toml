@@ -1,0 +1,29 @@
+[package]
+name = "nkxlat"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+libbpf-cargo = "0.27.2"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+daemonize = "0.5.0"
+libbpf-rs = "0.27.2"
+linux-raw-sys = { version = "0.12.1", features = ["netlink"] }
+netlink-bindings = { version = "0.3.5", features = ["rt-link"] }
+netlink-socket2 = "0.3.5"
+rustix = { version = "1.1.6", features = ["thread"] }
+sd-notify = { path = "third_party/sd-notify" }
+
+[workspace]
+members = ["third_party/sd-notify"]
+
+[profile.shipping]
+inherits = "release"
+panic = "abort"
+opt-level = "z"
+codegen-units = 1
+lto = true
+strip = true
