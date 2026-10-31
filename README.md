@@ -14,7 +14,7 @@ Arguments:
   <PREFIX>
           NAT64 prefix to use for translation.
           
-          Packet source and destination addresses will be translated according to RFC 6502 section 2.3 with the chosen prefix.
+          Packet source and destination addresses will be translated according to RFC 6052 section 2.3 with the chosen prefix.
           
           Prefix lengths of 96, 64, 56, 48, 40 and 32 are supported.
 
