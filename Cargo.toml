@@ -13,4 +13,7 @@ libbpf-rs = "0.27.2"
 netlink-bindings = { version = "0.3.5", features = ["rt-link"] }
 netlink-socket2 = "0.3.5"
 nix = { version = "0.31.3", features = ["net", "sched"] }
-sd-notify = "0.5.0"
+sd-notify = { path = "third_party/sd-notify" }
+
+[workspace]
+members = ["third_party/sd-notify"]
