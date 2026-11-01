@@ -40,15 +40,15 @@ nkxlat nkxlat0 64:ff9b::/96
 In another terminal:
 ```sh
 ip link set nkxlat0 up
-ip route add 64:ff9b::/96 dev nkxlat0
-ip route add 192.168.64.1 dev nkxlat0
+ip address add 64:ff9b::192.0.0.7/96 dev nkxlat0
+ip route add 192.0.0.7 dev nkxlat0
 nft -f - <<EOF
-destroy table inet nat64
-table inet nat64 {
+destroy table inet nkxlat
+table inet nkxlat {
     chain postrouting {
         type nat hook postrouting priority srcnat
-        iifname != nkxlat0 oifname nkxlat0 snat ip6 to 64:ff9b::192.168.64.1
-        iifname nkxlat0 oifname != nkxlat0 masquerade
+        iifname nkxlat0 masquerade
+        oifname nkxlat0 masquerade
     }
 }
 EOF
