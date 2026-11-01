@@ -20,7 +20,7 @@ use netlink_socket2::{MulticastSocketRaw, NetlinkSocket};
 use nix::{
     libc::{RTM_DELLINK, RTNLGRP_LINK},
     net::if_::if_nametoindex,
-    sched::{CloneFlags, unshare},
+    sched::{CloneFlags, setns, unshare},
 };
 use sd_notify::NotifyState;
 
@@ -120,8 +120,6 @@ fn main() -> anyhow::Result<()> {
         .recv_ack()
         .context("unable to create interface")?;
 
-    drop(system_netns);
-
     let ifindex =
         if_nametoindex(args.interface.as_str()).context("unable to get interface index")?;
 
@@ -148,7 +146,16 @@ fn main() -> anyhow::Result<()> {
         )
     };
 
+    let nkxlat_netns =
+        File::open("/proc/self/ns/net").context("failed to open created network namespace")?;
+
+    setns(system_netns, CloneFlags::CLONE_NEWNET)
+        .context("failed to switch to system network namespace")?;
+
     let _ = sd_notify::notify(&[NotifyState::Ready]);
+
+    setns(nkxlat_netns, CloneFlags::CLONE_NEWNET)
+        .context("failed to switch to created network namespace")?;
 
     loop {
         let (recv, buf) = multicast_sock
