@@ -30,8 +30,9 @@ Options:
 
 # Stateful NAT64 example
 
-While this implementation does not provide a stateful NAT64, it can be combined with Linux's own stateful NAT44 and NAT66 to achieve a similar effect:
+While this implementation does not provide a stateful NAT64, it can be combined with Linux's own stateful NAT44 and NAT66 to achieve a similar effect.
 
+Run:
 ```sh
 nkxlat nkxlat0 64:ff9b::/96
 ```
