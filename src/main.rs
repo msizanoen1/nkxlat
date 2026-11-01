@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
         });
     request
         .encode()
-        .push_ifname_bytes(b"nkxlat")
+        .push_ifname_bytes(args.interface.as_bytes())
         .nested_linkinfo()
         .nested_data_netkit()
         .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _)
@@ -122,7 +122,8 @@ fn main() -> anyhow::Result<()> {
 
     drop(system_netns);
 
-    let ifindex = if_nametoindex("nkxlat").context("unable to get interface index")?;
+    let ifindex =
+        if_nametoindex(args.interface.as_str()).context("unable to get interface index")?;
 
     let mut open_skel = MaybeUninit::uninit();
     let skel = ClatSkelBuilder::default()
