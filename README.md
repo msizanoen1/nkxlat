@@ -5,11 +5,9 @@ Usage: nkxlat [OPTIONS] <INTERFACE> <PREFIX>
 
 Arguments:
   <INTERFACE>
-          Netkit primary interface to attach to.
+          Name of interface to create.
           
-          IPv6 packets sent to this interface will be translated to IPv4 before returning through its peer interface and vice versa.
-          
-          The MTU of the peer interface should be 20 bytes lower than its primary.
+          IPv6 packets sent to this interface will be translated to IPv4 before returning through the same interface and vice versa.
 
   <PREFIX>
           NAT64 prefix to use for translation.
@@ -35,27 +33,25 @@ Options:
 While this implementation does not provide a stateful NAT64, it can be combined with Linux's own stateful NAT44 and NAT66 to achieve a similar effect:
 
 ```sh
-ip link add nat64 mtu 1500 type netkit blackhole peer nat46 mtu 1480
-ip link set nat64 up
-ip link set nat46 up
-ip route add 64:ff9b::/96 dev nat64
-ip route add 192.168.64.1 dev nat46
+nkxlat nkxlat0 64:ff9b::/96
+```
+
+In another terminal:
+```sh
+ip link set nkxlat0 up
+ip route add 64:ff9b::/96 dev nkxlat0
+ip route add 192.168.64.1 dev nkxlat0
 nft -f - <<EOF
 destroy table inet nat64
 table inet nat64 {
     chain postrouting {
         type nat hook postrouting priority srcnat
-        iifname != nat64 oifname nat64 snat ip6 to 64:ff9b::192.168.64.1
-        iifname nat46 oifname != nat46 masquerade
+        iifname != nkxlat0 oifname nkxlat0 snat ip6 to 64:ff9b::192.168.64.1
+        iifname nkxlat0 oifname != nkxlat0 masquerade
     }
 }
 EOF
 sysctl -wq net.ipv4.ip_forward=1
 sysctl -wq net.ipv6.conf.all.forwarding=1
-nkxlat nat64 64:ff9b::/96
-```
-
-In another terminal:
-```sh
 ping 64:ff9b::8.8.8.8
 ```

@@ -1,9 +1,10 @@
 use std::{
+    fs::File,
     mem::MaybeUninit,
     net::{Ipv4Addr, Ipv6Addr},
+    os::fd::AsRawFd,
     ptr::{self, NonNull},
     str::FromStr,
-    thread,
 };
 
 use crate::clat::ClatSkelBuilder;
@@ -11,8 +12,17 @@ use anyhow::Context;
 use clap::Parser;
 use libbpf_rs::{
     AsRawLibbpf, Link,
+    libbpf_sys::bpf_program__attach_netkit,
     skel::{OpenSkel, SkelBuilder},
 };
+use netlink_bindings::{rt_link, traits::NetlinkRequest};
+use netlink_socket2::{MulticastSocketRaw, NetlinkSocket};
+use nix::{
+    libc::{RTM_DELLINK, RTNLGRP_LINK},
+    net::if_::if_nametoindex,
+    sched::{CloneFlags, unshare},
+};
+use sd_notify::NotifyState;
 
 #[derive(Clone, Copy, Debug)]
 struct Pref64 {
@@ -34,24 +44,22 @@ impl FromStr for Pref64 {
             96 | 64 | 56 | 48 | 40 | 32 => (),
             _ => anyhow::bail!("unsupported prefix length {}", prefix_length),
         }
-        return Ok(Self {
+        Ok(Self {
             address: address_str.parse().map_err(|e| {
                 anyhow::format_err!("invalid IPv6 address {:?}: {}", address_str, e)
             })?,
             prefix_length,
-        });
+        })
     }
 }
 
 /// A Netkit-based stateless NAT64 implementation.
 #[derive(clap::Parser)]
 struct Args {
-    /// Netkit primary interface to attach to.
+    /// Name of interface to create.
     ///
     /// IPv6 packets sent to this interface will be translated to IPv4 before
-    /// returning through its peer interface and vice versa.
-    ///
-    /// The MTU of the peer interface should be 20 bytes lower than its primary.
+    /// returning through the same interface and vice versa.
     interface: String,
     /// NAT64 prefix to use for translation.
     ///
@@ -76,45 +84,80 @@ mod clat {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    let system_netns =
+        File::open("/proc/self/ns/net").context("unable to open current network namespace")?;
+
+    unshare(CloneFlags::CLONE_NEWNET).context("unable to create network namespace")?;
+
+    let mut multicast_sock = MulticastSocketRaw::new(rt_link::PROTONUM)
+        .context("unable to create netlink multicast socket")?;
+    multicast_sock
+        .listen(RTNLGRP_LINK)
+        .context("unable to bind netlink multicast socket")?;
+
+    let mut request = rt_link::Request::new()
+        .set_create()
+        .op_newlink_do(&rt_link::Ifinfomsg {
+            ifi_flags: rt_link::IfinfoFlags::Up as _,
+            ifi_change: rt_link::IfinfoFlags::Up as _,
+            ..Default::default()
+        });
+    request
+        .encode()
+        .push_ifname_bytes(b"nkxlat")
+        .nested_linkinfo()
+        .nested_data_netkit()
+        .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _)
+        .push_peer_info(
+            &rt_link::PushLinkAttrs::new(rt_link::Ifinfomsg::new().into_array().to_vec())
+                .push_net_ns_fd(system_netns.as_raw_fd() as _)
+                .push_ifname_bytes(args.interface.as_bytes())
+                .end_nested(),
+        );
+    NetlinkSocket::new()
+        .request(&request)
+        .context("unable to send create interface request")?
+        .recv_ack()
+        .context("unable to create interface")?;
+
+    drop(system_netns);
+
+    let ifindex = if_nametoindex("nkxlat").context("unable to get interface index")?;
+
     let mut open_skel = MaybeUninit::uninit();
     let skel = ClatSkelBuilder::default()
-        .open(&mut open_skel)?
+        .open(&mut open_skel)
+        .context("unable to open BPF program")?
         .load()
-        .context("unable to load BPF programs")?;
+        .context("unable to load BPF program")?;
 
     let bss_data = skel.maps.bss_data.unwrap();
     bss_data.config.pref64.in6_u.u6_addr8 = args.prefix.address.octets();
     bss_data.config.pref64_len = args.prefix.prefix_length;
     bss_data.config.untranslatable_v4.s_addr = args.untranslatable_v4.to_bits().to_be();
 
-    let ifindex = nix::net::if_::if_nametoindex(args.interface.as_str())
-        .context("unable to get interface index")?;
-
-    let _primary_link = unsafe {
-        Link::from_ptr(
-            NonNull::new(libbpf_rs::libbpf_sys::bpf_program__attach_netkit(
-                skel.progs.nm_clat_primary.as_libbpf_object().as_ptr(),
-                ifindex as i32,
-                ptr::null(),
-            ))
-            .ok_or_else(|| anyhow::format_err!("unable to attach primary BPF program"))?,
-        )
-    };
-
     let _peer_link = unsafe {
         Link::from_ptr(
-            NonNull::new(libbpf_rs::libbpf_sys::bpf_program__attach_netkit(
+            NonNull::new(bpf_program__attach_netkit(
                 skel.progs.nm_clat_peer.as_libbpf_object().as_ptr(),
-                ifindex as i32,
+                ifindex as _,
                 ptr::null(),
             ))
-            .ok_or_else(|| anyhow::format_err!("unable to attach peer BPF program"))?,
+            .ok_or_else(|| anyhow::format_err!("unable to attach BPF program"))?,
         )
     };
 
-    eprintln!("nkxlat: programs attached");
+    let _ = sd_notify::notify(&[NotifyState::Ready]);
 
     loop {
-        thread::park();
+        let (recv, buf) = multicast_sock
+            .recv()
+            .context("unable to read from netlink multicast socket")?;
+        if recv.message_type == RTM_DELLINK {
+            let (header, _attrs) = rt_link::OpGetlinkDo::decode_reply(buf);
+            if header.ifi_index == ifindex as _ {
+                anyhow::bail!("interface vanished");
+            }
+        }
     }
 }
