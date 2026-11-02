@@ -24,6 +24,9 @@ Options:
           
           [default: 192.0.0.8]
 
+  -f, --foreground
+          Don't daemonize
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -33,7 +36,7 @@ Options:
 While this implementation does not provide a stateful NAT64, it can be combined with Linux's own stateful NAT44 and NAT66 to achieve a similar effect:
 
 ```sh
-systemd-run --service-type=notify nkxlat nkxlat0 64:ff9b::/96
+nkxlat nkxlat0 64:ff9b::/96
 ip link set nkxlat0 up
 ip address add 64:ff9b::192.0.0.7/96 dev nkxlat0
 ip route add 192.0.0.7 dev nkxlat0

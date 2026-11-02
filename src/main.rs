@@ -10,6 +10,7 @@ use std::{
 use crate::clat::ClatSkelBuilder;
 use anyhow::Context;
 use clap::Parser;
+use daemonize::Daemonize;
 use libbpf_rs::{
     AsRawLibbpf, Link,
     libbpf_sys::bpf_program__attach_netkit,
@@ -75,6 +76,9 @@ struct Args {
     /// prefix will have its source address remapped to this value.
     #[arg(long, short, default_value = "192.0.0.8")]
     untranslatable_v4: Ipv4Addr,
+    /// Don't daemonize.
+    #[arg(long, short)]
+    foreground: bool,
 }
 
 mod clat {
@@ -146,16 +150,21 @@ fn main() -> anyhow::Result<()> {
         )
     };
 
-    let nkxlat_netns =
-        File::open("/proc/self/ns/net").context("failed to open created network namespace")?;
+    if args.foreground {
+        let nkxlat_netns =
+            File::open("/proc/self/ns/net").context("failed to open created network namespace")?;
 
-    setns(system_netns, CloneFlags::CLONE_NEWNET)
-        .context("failed to switch to system network namespace")?;
+        setns(system_netns, CloneFlags::CLONE_NEWNET)
+            .context("failed to switch to system network namespace")?;
 
-    let _ = sd_notify::notify(&[NotifyState::Ready]);
+        let _ = sd_notify::notify(&[NotifyState::Ready]);
 
-    setns(nkxlat_netns, CloneFlags::CLONE_NEWNET)
-        .context("failed to switch to created network namespace")?;
+        setns(nkxlat_netns, CloneFlags::CLONE_NEWNET)
+            .context("failed to switch to created network namespace")?;
+    } else {
+        drop(system_netns);
+        Daemonize::new().start().context("failed to daemonize")?;
+    }
 
     loop {
         let (recv, buf) = multicast_sock
