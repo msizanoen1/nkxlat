@@ -57,3 +57,7 @@ sysctl -wq net.ipv4.ip_forward=1
 sysctl -wq net.ipv6.conf.all.forwarding=1
 ping 64:ff9b::8.8.8.8
 ```
+
+# Credits
+
+The eBPF packet translation logic is derived from [NetworkManager's eBPF-based CLAT implementation](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/blob/main/src/core/bpf/clat.bpf.c). The modified version used by this project can be found [here](https://github.com/msizanoen1/NetworkManager/blob/nkxlat/src/core/bpf/clat.bpf.c).
