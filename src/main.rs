@@ -198,7 +198,7 @@ fn main() -> anyhow::Result<()> {
     bss_data.config.untranslatable_v4.s_addr = args.untranslatable_v4.to_bits().to_be();
 
     if args.veth {
-        TcHookBuilder::new(skel.progs.nm_clat_tc.as_fd())
+        TcHookBuilder::new(skel.progs.nm_clat_peer.as_fd())
             .ifindex(ifindex)
             .hook(TC_INGRESS)
             .handle(1)
