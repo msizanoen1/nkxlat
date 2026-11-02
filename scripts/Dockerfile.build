@@ -1,0 +1,29 @@
+FROM debian:10
+
+RUN echo "Acquire::Check-Valid-Until false;" >/etc/apt/apt.conf.d/10-nocheckvalid
+RUN sed -i -n -e 's/^# //p' /etc/apt/sources.list
+
+RUN apt-get update && \
+    apt-get install -y \
+        autoconf \
+        automake \
+        autopoint \
+        bison \
+        build-essential \
+        curl \
+        flex \
+        gawk \
+        gnupg \
+        lsb-release \
+        pkg-config \
+        software-properties-common \
+        wget
+
+RUN bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" - 20
+RUN cp -s /usr/bin/clang-20 /usr/local/bin/clang
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s - -y
+
+ENV PATH=/root/.cargo/bin:$PATH
+
+RUN apt-get install -y linux-libc-dev

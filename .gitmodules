@@ -6,3 +6,6 @@
 	path = third_party/sd-notify
 	url = https://github.com/msizanoen1/sd-notify.git
 	branch = nkxlat
+[submodule "third_party/vmlinux.h"]
+	path = third_party/vmlinux.h
+	url = https://github.com/libbpf/vmlinux.h.git
