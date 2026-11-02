@@ -1,9 +1,10 @@
 use std::{
     fs::File,
+    io::ErrorKind,
     mem::MaybeUninit,
     net::{Ipv4Addr, Ipv6Addr},
-    os::fd::AsRawFd,
-    ptr::{self, NonNull},
+    os::fd::{AsFd, AsRawFd},
+    ptr,
     str::FromStr,
 };
 
@@ -12,14 +13,18 @@ use anyhow::Context;
 use clap::Parser;
 use daemonize::Daemonize;
 use libbpf_rs::{
-    AsRawLibbpf, Link,
+    AsRawLibbpf, TC_INGRESS, TcHookBuilder,
     libbpf_sys::bpf_program__attach_netkit,
     skel::{OpenSkel, SkelBuilder},
 };
-use netlink_bindings::{rt_link, traits::NetlinkRequest};
+use netlink_bindings::{
+    rt_link,
+    traits::NetlinkRequest,
+    utils::{Rec, finalize_nested_header, push_nested_header},
+};
 use netlink_socket2::{MulticastSocketRaw, NetlinkSocket};
 use nix::{
-    libc::{RTM_DELLINK, RTNLGRP_LINK},
+    libc::{IFLA_INFO_DATA, RTM_DELLINK, RTNLGRP_LINK},
     net::if_::if_nametoindex,
     sched::{CloneFlags, setns, unshare},
 };
@@ -79,6 +84,9 @@ struct Args {
     /// Don't daemonize.
     #[arg(long, short)]
     foreground: bool,
+    /// Use veth even if netkit is supported by the kernel.
+    #[arg(long, short)]
+    veth: bool,
 }
 
 mod clat {
@@ -86,7 +94,7 @@ mod clat {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let system_netns =
         File::open("/proc/self/ns/net").context("unable to open current network namespace")?;
@@ -99,33 +107,83 @@ fn main() -> anyhow::Result<()> {
         .listen(RTNLGRP_LINK)
         .context("unable to bind netlink multicast socket")?;
 
-    let mut request = rt_link::Request::new()
-        .set_create()
-        .op_newlink_do(&rt_link::Ifinfomsg {
-            ifi_flags: rt_link::IfinfoFlags::Up as _,
-            ifi_change: rt_link::IfinfoFlags::Up as _,
-            ..Default::default()
-        });
-    request
-        .encode()
-        .push_ifname_bytes(args.interface.as_bytes())
-        .nested_linkinfo()
-        .nested_data_netkit()
-        .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _)
-        .push_peer_info(
-            &rt_link::PushLinkAttrs::new(rt_link::Ifinfomsg::new().into_array().to_vec())
-                .push_net_ns_fd(system_netns.as_raw_fd() as _)
-                .push_ifname_bytes(args.interface.as_bytes())
-                .end_nested(),
+    if !args.veth {
+        let mut request = rt_link::Request::new()
+            .set_create()
+            .op_newlink_do(&rt_link::Ifinfomsg {
+                ifi_flags: rt_link::IfinfoFlags::Up as _,
+                ifi_change: rt_link::IfinfoFlags::Up as _,
+                ..Default::default()
+            });
+        let mut encoder = request
+            .encode()
+            .push_ifname_bytes(args.interface.as_bytes())
+            .nested_linkinfo()
+            .nested_data_netkit()
+            .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _);
+        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), 1);
+        encoder
+            .as_vec_mut()
+            .extend_from_slice(rt_link::Ifinfomsg::new().as_slice());
+        rt_link::PushLinkAttrs::new(encoder.as_vec_mut())
+            .push_net_ns_fd(system_netns.as_raw_fd() as _)
+            .push_ifname_bytes(args.interface.as_bytes());
+        finalize_nested_header(encoder.as_vec_mut(), peer_info_offset);
+        drop(encoder);
+
+        if let Err(e) = NetlinkSocket::new()
+            .request(&request)
+            .context("unable to send create interface request")?
+            .recv_ack()
+        {
+            if e.as_io_error().kind() == ErrorKind::Unsupported {
+                eprintln!("netkit not supported on this kernel, falling back to veth");
+                args.veth = true;
+            } else {
+                return Err(e).context("unable to create interface");
+            }
+        }
+    }
+
+    if args.veth {
+        let mut request = rt_link::Request::new()
+            .set_create()
+            .op_newlink_do(&rt_link::Ifinfomsg {
+                ifi_flags: rt_link::IfinfoFlags::NoArp as u32 | rt_link::IfinfoFlags::Up as u32,
+                ifi_change: rt_link::IfinfoFlags::NoArp as u32 | rt_link::IfinfoFlags::Up as u32,
+                ..Default::default()
+            });
+        let mut encoder = request
+            .encode()
+            .push_ifname_bytes(args.interface.as_bytes())
+            .nested_linkinfo()
+            .push_kind_bytes(b"veth");
+        let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA);
+        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), 1);
+        encoder.as_vec_mut().extend_from_slice(
+            rt_link::Ifinfomsg {
+                ifi_flags: rt_link::IfinfoFlags::NoArp as _,
+                ifi_change: rt_link::IfinfoFlags::NoArp as _,
+                ..Default::default()
+            }
+            .as_slice(),
         );
-    NetlinkSocket::new()
-        .request(&request)
-        .context("unable to send create interface request")?
-        .recv_ack()
-        .context("unable to create interface")?;
+        rt_link::PushLinkAttrs::new(encoder.as_vec_mut())
+            .push_net_ns_fd(system_netns.as_raw_fd() as _)
+            .push_ifname_bytes(args.interface.as_bytes());
+        finalize_nested_header(encoder.as_vec_mut(), peer_info_offset);
+        finalize_nested_header(encoder.as_vec_mut(), data_offset);
+        drop(encoder);
+
+        NetlinkSocket::new()
+            .request(&request)
+            .context("unable to send create interface request")?
+            .recv_ack()
+            .context("unable to create interface")?;
+    }
 
     let ifindex =
-        if_nametoindex(args.interface.as_str()).context("unable to get interface index")?;
+        if_nametoindex(args.interface.as_str()).context("unable to get interface index")? as i32;
 
     let mut open_skel = MaybeUninit::uninit();
     let skel = ClatSkelBuilder::default()
@@ -139,16 +197,29 @@ fn main() -> anyhow::Result<()> {
     bss_data.config.pref64_len = args.prefix.prefix_length;
     bss_data.config.untranslatable_v4.s_addr = args.untranslatable_v4.to_bits().to_be();
 
-    let _peer_link = unsafe {
-        Link::from_ptr(
-            NonNull::new(bpf_program__attach_netkit(
+    if args.veth {
+        TcHookBuilder::new(skel.progs.nm_clat_tc.as_fd())
+            .ifindex(ifindex)
+            .hook(TC_INGRESS)
+            .handle(1)
+            .priority(1)
+            .create()
+            .context("unable to create tc hook")?
+            .attach()
+            .context("unable to attach BPF program")?;
+    } else {
+        unsafe {
+            if bpf_program__attach_netkit(
                 skel.progs.nm_clat_peer.as_libbpf_object().as_ptr(),
-                ifindex as _,
+                ifindex,
                 ptr::null(),
-            ))
-            .ok_or_else(|| anyhow::format_err!("unable to attach BPF program"))?,
-        )
-    };
+            )
+            .is_null()
+            {
+                anyhow::bail!("unable to attach BPF program");
+            }
+        }
+    }
 
     if args.foreground {
         let nkxlat_netns =
@@ -172,7 +243,7 @@ fn main() -> anyhow::Result<()> {
             .context("unable to read from netlink multicast socket")?;
         if recv.message_type == RTM_DELLINK {
             let (header, _attrs) = rt_link::OpGetlinkDo::decode_reply(buf);
-            if header.ifi_index == ifindex as _ {
+            if header.ifi_index == ifindex {
                 break;
             }
         }
