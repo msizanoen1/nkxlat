@@ -164,8 +164,10 @@ fn main() -> anyhow::Result<()> {
         if recv.message_type == RTM_DELLINK {
             let (header, _attrs) = rt_link::OpGetlinkDo::decode_reply(buf);
             if header.ifi_index == ifindex as _ {
-                anyhow::bail!("interface vanished");
+                break;
             }
         }
     }
+
+    Ok(())
 }
