@@ -27,6 +27,9 @@ Options:
   -f, --foreground
           Don't daemonize
 
+  -v, --veth
+          Use veth even if netkit is supported by the kernel
+
   -h, --help
           Print help (see a summary with '-h')
 ```
