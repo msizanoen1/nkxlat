@@ -14,4 +14,4 @@ podman run \
     -e CARGO_HOME=/src/container-build/cargo \
     -e CARGO_TARGET_DIR=/src/container-build/target \
     "$(cat container-build/image)" \
-    cargo build --release --features libbpf-rs/vendored
+    cargo build --profile shipping --features libbpf-rs/vendored
