@@ -41,16 +41,17 @@ While this implementation does not provide a stateful NAT64, it can be combined 
 ```sh
 nkxlat nkxlat0 64:ff9b::/96
 ip link set nkxlat0 up
-ip address add 64:ff9b::192.0.0.7 dev nkxlat0
+ip address add 64:ff9b::192.168.64.64 dev nkxlat0
 ip route add 64:ff9b::/96 dev nkxlat0
-ip route add 192.0.0.7 dev nkxlat0
+ip route add 192.168.64.64 dev nkxlat0
+ip route add 192.0.0.8 dev nkxlat0 # satisfy rp_filter for untranslatable ICMP packets
 nft -f - <<EOF
 destroy table inet nkxlat
 table inet nkxlat {
     chain postrouting {
         type nat hook postrouting priority srcnat
-        iifname nkxlat0 masquerade
-        oifname nkxlat0 masquerade
+        oifname nkxlat0 ip6 saddr != 64:ff9b::/96 masquerade
+        oifname != nkxlat0 ip saddr 192.168.64.64 masquerade
     }
 }
 EOF
