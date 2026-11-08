@@ -18,7 +18,8 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
 };
 use linux_raw_sys::netlink::{
-    IFLA_INFO_DATA, IFLA_NETKIT_PEER_INFO, RTM_DELLINK, rtnetlink_groups::RTNLGRP_LINK,
+    IFLA_INFO_DATA, IFLA_NETKIT_PEER_INFO, RTM_DELLINK, in6_addr_gen_mode::IN6_ADDR_GEN_MODE_NONE,
+    rtnetlink_groups::RTNLGRP_LINK,
 };
 use netlink_bindings::{
     rt_link,
@@ -98,11 +99,15 @@ fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
 
     let system_netns =
-        File::open("/proc/self/ns/net").context("unable to open current network namespace")?;
+        File::open("/proc/self/ns/net").context("unable to open system network namespace")?;
 
     unsafe {
-        unshare_unsafe(UnshareFlags::NEWNET).context("unable to create network namespace")?;
+        unshare_unsafe(UnshareFlags::NEWNET)
+            .context("unable to create internal network namespace")?;
     }
+
+    let nkxlat_netns =
+        File::open("/proc/self/ns/net").context("unable to open internal network namespace")?;
 
     let mut multicast_sock = MulticastSocketRaw::new(rt_link::PROTONUM)
         .context("unable to create netlink multicast socket")?;
@@ -113,17 +118,12 @@ fn main() -> anyhow::Result<()> {
     if !args.veth {
         let mut request = rt_link::Request::new()
             .set_create()
-            .op_newlink_do(&rt_link::Ifinfomsg {
-                ifi_flags: rt_link::IfinfoFlags::Up as _,
-                ifi_change: rt_link::IfinfoFlags::Up as _,
-                ..Default::default()
-            });
+            .op_newlink_do(&rt_link::Ifinfomsg::new());
         let mut encoder = request
             .encode()
             .push_ifname_bytes(args.interface.as_bytes())
             .nested_linkinfo()
-            .nested_data_netkit()
-            .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _);
+            .nested_data_netkit();
         let peer_info_offset = push_nested_header(encoder.as_vec_mut(), IFLA_NETKIT_PEER_INFO as _);
         encoder
             .as_vec_mut()
@@ -152,8 +152,8 @@ fn main() -> anyhow::Result<()> {
         let mut request = rt_link::Request::new()
             .set_create()
             .op_newlink_do(&rt_link::Ifinfomsg {
-                ifi_flags: rt_link::IfinfoFlags::NoArp as u32 | rt_link::IfinfoFlags::Up as u32,
-                ifi_change: rt_link::IfinfoFlags::NoArp as u32 | rt_link::IfinfoFlags::Up as u32,
+                ifi_flags: rt_link::IfinfoFlags::NoArp as u32,
+                ifi_change: rt_link::IfinfoFlags::NoArp as u32,
                 ..Default::default()
             });
         let mut encoder = request
@@ -187,7 +187,7 @@ fn main() -> anyhow::Result<()> {
             .context("unable to create interface")?;
     }
 
-    let mut request = rt_link::Request::new().op_getlink_do(&Default::default());
+    let mut request = rt_link::Request::new().op_getlink_do(&rt_link::Ifinfomsg::new());
     request
         .encode()
         .push_ifname_bytes(args.interface.as_bytes());
@@ -235,22 +235,56 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let mut request = rt_link::Request::new()
+        .set_change()
+        .op_setlink_do(&rt_link::Ifinfomsg {
+            ifi_flags: rt_link::IfinfoFlags::Up as _,
+            ifi_change: rt_link::IfinfoFlags::Up as _,
+            ifi_index: ifindex,
+            ..Default::default()
+        });
+    request
+        .encode()
+        .nested_af_spec()
+        .nested_inet6()
+        .push_addr_gen_mode(IN6_ADDR_GEN_MODE_NONE as _);
+    NetlinkSocket::new()
+        .request(&request)
+        .context("unable to send activate internal interface request")?
+        .recv_ack()
+        .context("unable to activate internal interface")?;
+
+    move_into_link_name_space(system_netns.as_fd(), Some(LinkNameSpaceType::Network))
+        .context("unable to switch to system network namespace")?;
+
+    let mut request = rt_link::Request::new()
+        .set_change()
+        .op_setlink_do(&rt_link::Ifinfomsg::new());
+    request
+        .encode()
+        .push_ifname_bytes(args.interface.as_bytes())
+        .nested_af_spec()
+        .nested_inet6()
+        .push_addr_gen_mode(IN6_ADDR_GEN_MODE_NONE as _);
+    NetlinkSocket::new()
+        .request(&request)
+        .context("unable to send configure interface request")?
+        .recv_ack()
+        .context("unable to configure interface")?;
+
     if args.foreground {
-        let nkxlat_netns =
-            File::open("/proc/self/ns/net").context("unable to open created network namespace")?;
-
-        move_into_link_name_space(system_netns.as_fd(), Some(LinkNameSpaceType::Network))
-            .context("unable to switch to system network namespace")?;
-
         let _ = sd_notify::notify(&[NotifyState::Ready]);
-
-        move_into_link_name_space(nkxlat_netns.as_fd(), Some(LinkNameSpaceType::Network))
-            .context("unable to switch to created network namespace")?;
-    } else {
-        Daemonize::new().start().context("unable to daemonize")?;
     }
 
+    move_into_link_name_space(nkxlat_netns.as_fd(), Some(LinkNameSpaceType::Network))
+        .context("unable to switch to internal network namespace")?;
+
     drop(system_netns);
+    drop(nkxlat_netns);
+
+    if !args.foreground {
+        Daemonize::new().start().context("unable to daemonize")?;
+    }
 
     loop {
         let (recv, buf) = multicast_sock
