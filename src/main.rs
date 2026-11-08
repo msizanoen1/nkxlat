@@ -1,4 +1,5 @@
 use std::{
+    ffi::c_ushort,
     fs::File,
     io::ErrorKind,
     mem::MaybeUninit,
@@ -29,6 +30,9 @@ use nix::{
     sched::{CloneFlags, setns, unshare},
 };
 use sd_notify::NotifyState;
+
+const VETH_INFO_PEER: c_ushort = 1;
+const IFLA_NETKIT_PEER_INFO: c_ushort = 1;
 
 #[derive(Clone, Copy, Debug)]
 struct Pref64 {
@@ -121,7 +125,7 @@ fn main() -> anyhow::Result<()> {
             .nested_linkinfo()
             .nested_data_netkit()
             .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _);
-        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), 1);
+        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), IFLA_NETKIT_PEER_INFO);
         encoder
             .as_vec_mut()
             .extend_from_slice(rt_link::Ifinfomsg::new().as_slice());
@@ -159,7 +163,7 @@ fn main() -> anyhow::Result<()> {
             .nested_linkinfo()
             .push_kind_bytes(b"veth");
         let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA);
-        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), 1);
+        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), VETH_INFO_PEER);
         encoder.as_vec_mut().extend_from_slice(
             rt_link::Ifinfomsg {
                 ifi_flags: rt_link::IfinfoFlags::NoArp as _,
