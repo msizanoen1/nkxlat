@@ -41,7 +41,8 @@ While this implementation does not provide a stateful NAT64, it can be combined 
 ```sh
 nkxlat nkxlat0 64:ff9b::/96
 ip link set nkxlat0 up
-ip address add 64:ff9b::192.0.0.7/96 dev nkxlat0
+ip address add 64:ff9b::192.0.0.7 dev nkxlat0
+ip route add 64:ff9b::/96 dev nkxlat0
 ip route add 192.0.0.7 dev nkxlat0
 nft -f - <<EOF
 destroy table inet nkxlat
