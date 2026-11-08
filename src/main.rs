@@ -159,7 +159,7 @@ fn main() -> anyhow::Result<()> {
         let mut encoder = request
             .encode()
             .push_ifname_bytes(args.interface.as_bytes())
-            .push_address(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
+            .push_address(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01])
             .nested_linkinfo()
             .push_kind_bytes(b"veth");
         let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA as _);
@@ -175,7 +175,7 @@ fn main() -> anyhow::Result<()> {
         rt_link::PushLinkAttrs::new(encoder.as_vec_mut())
             .push_net_ns_fd(system_netns.as_raw_fd() as _)
             .push_ifname_bytes(args.interface.as_bytes())
-            .push_address(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
+            .push_address(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
         finalize_nested_header(encoder.as_vec_mut(), peer_offset);
         finalize_nested_header(encoder.as_vec_mut(), data_offset);
         drop(encoder);
