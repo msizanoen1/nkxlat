@@ -402,15 +402,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memoffset"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "netlink-bindings"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -437,7 +428,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
- "memoffset",
 ]
 
 [[package]]
@@ -449,9 +439,10 @@ dependencies = [
  "daemonize",
  "libbpf-cargo",
  "libbpf-rs",
+ "linux-raw-sys",
  "netlink-bindings",
  "netlink-socket2",
- "nix",
+ "rustix",
  "sd-notify",
 ]
 

@@ -1,5 +1,4 @@
 use std::{
-    ffi::c_ushort,
     fs::File,
     io::ErrorKind,
     mem::MaybeUninit,
@@ -18,21 +17,19 @@ use libbpf_rs::{
     libbpf_sys::bpf_program__attach_netkit,
     skel::{OpenSkel, SkelBuilder},
 };
+use linux_raw_sys::netlink::{
+    IFLA_INFO_DATA, IFLA_NETKIT_PEER_INFO, RTM_DELLINK, rtnetlink_groups::RTNLGRP_LINK,
+};
 use netlink_bindings::{
     rt_link,
     traits::NetlinkRequest,
     utils::{Rec, finalize_nested_header, push_nested_header},
 };
 use netlink_socket2::{MulticastSocketRaw, NetlinkSocket};
-use nix::{
-    libc::{IFLA_INFO_DATA, RTM_DELLINK, RTNLGRP_LINK},
-    net::if_::if_nametoindex,
-    sched::{CloneFlags, setns, unshare},
-};
+use rustix::thread::{LinkNameSpaceType, UnshareFlags, move_into_link_name_space, unshare_unsafe};
 use sd_notify::NotifyState;
 
-const VETH_INFO_PEER: c_ushort = 1;
-const IFLA_NETKIT_PEER_INFO: c_ushort = 1;
+const VETH_INFO_PEER: u16 = 1;
 
 #[derive(Clone, Copy, Debug)]
 struct Pref64 {
@@ -103,12 +100,14 @@ fn main() -> anyhow::Result<()> {
     let system_netns =
         File::open("/proc/self/ns/net").context("unable to open current network namespace")?;
 
-    unshare(CloneFlags::CLONE_NEWNET).context("unable to create network namespace")?;
+    unsafe {
+        unshare_unsafe(UnshareFlags::NEWNET).context("unable to create network namespace")?;
+    }
 
     let mut multicast_sock = MulticastSocketRaw::new(rt_link::PROTONUM)
         .context("unable to create netlink multicast socket")?;
     multicast_sock
-        .listen(RTNLGRP_LINK)
+        .listen(RTNLGRP_LINK as _)
         .context("unable to bind netlink multicast socket")?;
 
     if !args.veth {
@@ -125,7 +124,7 @@ fn main() -> anyhow::Result<()> {
             .nested_linkinfo()
             .nested_data_netkit()
             .push_peer_policy(rt_link::NetkitPolicy::Blackhole as _);
-        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), IFLA_NETKIT_PEER_INFO);
+        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), IFLA_NETKIT_PEER_INFO as _);
         encoder
             .as_vec_mut()
             .extend_from_slice(rt_link::Ifinfomsg::new().as_slice());
@@ -160,9 +159,10 @@ fn main() -> anyhow::Result<()> {
         let mut encoder = request
             .encode()
             .push_ifname_bytes(args.interface.as_bytes())
+            .push_address(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
             .nested_linkinfo()
             .push_kind_bytes(b"veth");
-        let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA);
+        let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA as _);
         let peer_offset = push_nested_header(encoder.as_vec_mut(), VETH_INFO_PEER);
         encoder.as_vec_mut().extend_from_slice(
             rt_link::Ifinfomsg {
@@ -174,7 +174,8 @@ fn main() -> anyhow::Result<()> {
         );
         rt_link::PushLinkAttrs::new(encoder.as_vec_mut())
             .push_net_ns_fd(system_netns.as_raw_fd() as _)
-            .push_ifname_bytes(args.interface.as_bytes());
+            .push_ifname_bytes(args.interface.as_bytes())
+            .push_address(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
         finalize_nested_header(encoder.as_vec_mut(), peer_offset);
         finalize_nested_header(encoder.as_vec_mut(), data_offset);
         drop(encoder);
@@ -186,8 +187,17 @@ fn main() -> anyhow::Result<()> {
             .context("unable to create interface")?;
     }
 
-    let ifindex =
-        if_nametoindex(args.interface.as_str()).context("unable to get interface index")? as i32;
+    let mut request = rt_link::Request::new().op_getlink_do(&Default::default());
+    request
+        .encode()
+        .push_ifname_bytes(args.interface.as_bytes());
+    let ifindex = NetlinkSocket::new()
+        .request(&request)
+        .context("unable to send get interface request")?
+        .recv_one()
+        .context("unable to get interface")?
+        .0
+        .ifi_index;
 
     let mut open_skel = MaybeUninit::uninit();
     let skel = ClatSkelBuilder::default()
@@ -227,25 +237,26 @@ fn main() -> anyhow::Result<()> {
 
     if args.foreground {
         let nkxlat_netns =
-            File::open("/proc/self/ns/net").context("failed to open created network namespace")?;
+            File::open("/proc/self/ns/net").context("unable to open created network namespace")?;
 
-        setns(system_netns, CloneFlags::CLONE_NEWNET)
-            .context("failed to switch to system network namespace")?;
+        move_into_link_name_space(system_netns.as_fd(), Some(LinkNameSpaceType::Network))
+            .context("unable to switch to system network namespace")?;
 
         let _ = sd_notify::notify(&[NotifyState::Ready]);
 
-        setns(nkxlat_netns, CloneFlags::CLONE_NEWNET)
-            .context("failed to switch to created network namespace")?;
+        move_into_link_name_space(nkxlat_netns.as_fd(), Some(LinkNameSpaceType::Network))
+            .context("unable to switch to created network namespace")?;
     } else {
-        drop(system_netns);
-        Daemonize::new().start().context("failed to daemonize")?;
+        Daemonize::new().start().context("unable to daemonize")?;
     }
+
+    drop(system_netns);
 
     loop {
         let (recv, buf) = multicast_sock
             .recv()
             .context("unable to read from netlink multicast socket")?;
-        if recv.message_type == RTM_DELLINK {
+        if recv.message_type == RTM_DELLINK as _ {
             let (header, _attrs) = rt_link::OpGetlinkDo::decode_reply(buf);
             if header.ifi_index == ifindex {
                 break;
