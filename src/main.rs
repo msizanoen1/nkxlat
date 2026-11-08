@@ -163,7 +163,7 @@ fn main() -> anyhow::Result<()> {
             .nested_linkinfo()
             .push_kind_bytes(b"veth");
         let data_offset = push_nested_header(encoder.as_vec_mut(), IFLA_INFO_DATA);
-        let peer_info_offset = push_nested_header(encoder.as_vec_mut(), VETH_INFO_PEER);
+        let peer_offset = push_nested_header(encoder.as_vec_mut(), VETH_INFO_PEER);
         encoder.as_vec_mut().extend_from_slice(
             rt_link::Ifinfomsg {
                 ifi_flags: rt_link::IfinfoFlags::NoArp as _,
@@ -175,7 +175,7 @@ fn main() -> anyhow::Result<()> {
         rt_link::PushLinkAttrs::new(encoder.as_vec_mut())
             .push_net_ns_fd(system_netns.as_raw_fd() as _)
             .push_ifname_bytes(args.interface.as_bytes());
-        finalize_nested_header(encoder.as_vec_mut(), peer_info_offset);
+        finalize_nested_header(encoder.as_vec_mut(), peer_offset);
         finalize_nested_header(encoder.as_vec_mut(), data_offset);
         drop(encoder);
 
