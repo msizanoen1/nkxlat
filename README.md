@@ -71,7 +71,7 @@ sysctl -wq net.ipv4.ip_forward=1
 sysctl -wq net.ipv6.conf.all.forwarding=1
 
 # may be needed on systems with firewalld
-firewall-cmd --zone=trusted --add-interface=nkxlat0
+firewall-cmd --zone=trusted --change-interface=nkxlat0
 
 # test connectivity
 ping 64:ff9b::8.8.8.8
