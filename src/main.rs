@@ -203,9 +203,9 @@ fn main() -> anyhow::Result<()> {
     let mut open_skel = MaybeUninit::uninit();
     let skel = NkxlatSkelBuilder::default()
         .open(&mut open_skel)
-        .context("unable to open BPF program")?
+        .context("unable to open BPF object")?
         .load()
-        .context("unable to load BPF program")?;
+        .context("unable to load BPF object")?;
 
     let bss_data = skel.maps.bss_data.unwrap();
     bss_data.config.pref64.in6_u.u6_addr8 = args.prefix.address.octets();
@@ -216,10 +216,8 @@ fn main() -> anyhow::Result<()> {
         TcHookBuilder::new(skel.progs.nkxlat_peer.as_fd())
             .ifindex(ifindex)
             .hook(TC_INGRESS)
-            .handle(1)
-            .priority(1)
             .create()
-            .context("unable to create tc hook")?
+            .context("unable to create qdisc")?
             .attach()
             .context("unable to attach BPF program")?;
     } else {
