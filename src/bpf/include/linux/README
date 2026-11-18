@@ -1,0 +1,1 @@
+This directory contains compatibility files that allows NetworkManager's CLAT module to build against libbpf's vmlinux.h headers.

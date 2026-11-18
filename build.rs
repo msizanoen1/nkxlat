@@ -6,12 +6,12 @@ use std::{
 
 use libbpf_cargo::SkeletonBuilder;
 
-const SRC: &str = "third_party/NetworkManager/src/core/bpf/clat.bpf.c";
+const SRC: &str = "src/bpf/nkxlat.bpf.c";
 
 fn main() {
     let mut out =
         PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
-    out.push("clat.skel.rs");
+    out.push("nkxlat.skel.rs");
 
     let arch = env::var("CARGO_CFG_TARGET_ARCH")
         .expect("CARGO_CFG_TARGET_ARCH must be set in build script");
@@ -23,6 +23,8 @@ fn main() {
             Path::new("third_party/vmlinux.h/include")
                 .join(arch)
                 .as_os_str(),
+            OsStr::new("-I"),
+            OsStr::new("src/bpf/include"),
             OsStr::new("-D"),
             OsStr::new("NKXLAT"),
         ])

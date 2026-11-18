@@ -8,7 +8,6 @@ use std::{
     str::FromStr,
 };
 
-use crate::clat::ClatSkelBuilder;
 use anyhow::Context;
 use clap::Parser;
 use daemonize::Daemonize;
@@ -29,6 +28,8 @@ use netlink_bindings::{
 use netlink_socket2::{MulticastSocketRaw, NetlinkSocket};
 use rustix::thread::{LinkNameSpaceType, UnshareFlags, move_into_link_name_space, unshare_unsafe};
 use sd_notify::NotifyState;
+
+use crate::nkxlat::NkxlatSkelBuilder;
 
 const VETH_INFO_PEER: u16 = 1;
 
@@ -91,8 +92,8 @@ struct Args {
     veth: bool,
 }
 
-mod clat {
-    include!(concat!(env!("OUT_DIR"), "/clat.skel.rs"));
+mod nkxlat {
+    include!(concat!(env!("OUT_DIR"), "/nkxlat.skel.rs"));
 }
 
 fn main() -> anyhow::Result<()> {
@@ -200,7 +201,7 @@ fn main() -> anyhow::Result<()> {
         .ifi_index;
 
     let mut open_skel = MaybeUninit::uninit();
-    let skel = ClatSkelBuilder::default()
+    let skel = NkxlatSkelBuilder::default()
         .open(&mut open_skel)
         .context("unable to open BPF program")?
         .load()
@@ -212,7 +213,7 @@ fn main() -> anyhow::Result<()> {
     bss_data.config.untranslatable_v4.s_addr = args.untranslatable_v4.to_bits().to_be();
 
     if args.veth {
-        TcHookBuilder::new(skel.progs.nm_clat_peer.as_fd())
+        TcHookBuilder::new(skel.progs.nkxlat_peer.as_fd())
             .ifindex(ifindex)
             .hook(TC_INGRESS)
             .handle(1)
@@ -224,7 +225,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         unsafe {
             if bpf_program__attach_netkit(
-                skel.progs.nm_clat_peer.as_libbpf_object().as_ptr(),
+                skel.progs.nkxlat_peer.as_libbpf_object().as_ptr(),
                 ifindex,
                 ptr::null(),
             )
